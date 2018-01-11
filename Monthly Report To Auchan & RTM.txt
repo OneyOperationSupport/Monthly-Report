@@ -1,0 +1,127 @@
+/*调用DPS_APPLY_INFO&day.中所需数据*/							
+
+
+	
+DATA WORK.DPSDPS_DAILYAPPLY_INFO&day.;SET WORK.DPS_APPLY_INFO&day.;
+%datechange(APPLYDATE);%datechange(APPROVETIME); %datechange(FINISHDATE);%datechange(INPUTDATE);
+Apply_YearMonth= substr(APPLYDATE,1,10);
+run;							
+							
+/*选取所需字段*/							
+PROC SQL;							
+   CREATE TABLE  applyinfor AS 							
+   SELECT  							
+							
+APPLYCODE,							
+contractno,							
+Apply_YearMonth,							
+SIGNCONTRACT,							
+DEFPHASES,							
+STATUS,							
+POSCODE,							
+POSNAME,							
+totaldefprice,							
+TOTALPRICE							
+							
+FROM WORK.DPSDPS_DAILYAPPLY_INFO&day.;							
+QUIT;							
+run;							
+							
+							
+/*调用dps_RETURN_INFO&day.中所需数据*/														
+proc sql;							
+    create table returninfor as							
+	select						
+	accountno, 						
+	createdate						
+	from work.DPS_RETURN_INFO&day.;						
+quit;							
+run;							
+							
+/*需要将是否退货的信息v到申请信息表中，两表首先需要排序，排序后merge*/							
+proc sort data= applyinfor out=work.applyinfor1;							
+by contractno;run;							
+							
+data work.returninfor1;set work.returninfor (rename=(accountno = contractno createdate=returntime));							
+run;							
+							
+proc sort data=returninfor1 out=returninfor2;							
+by contractno;run;							
+							
+/*将两张数据合并为monthlydatatoHO数据表，里面存放所有月报中所需要数据*/							
+data monthlydatatoHO;							
+merge work.applyinfor1							
+      returninfor2;							
+by contractno;							
+run;							
+							
+/*增加一列数据用于判断月份*/							
+data work.monthlydatatoHO1;set work.monthlydatatoHO;							
+/*appyearmonth1= compress(tranwrd(substr(apply_yearmonth,1,7),"-","")); /*取月份进行后期运算*/							
+appyearmonth=substr(apply_yearmonth,1,7);							
+returnmonth=substr(returntime,1,7);							
+run;							
+							
+							
+proc sql;							
+create table monthlydatasummary as							
+select distinct posname ,appyearmonth,							
+	sum(case when status=3 or status=4 or status=8 or(status=0 and apply_yearmonth<>"none")then 1 else 0 end)as Application,						
+	sum(case when status=3 or status=4 or (status=0 and apply_yearmonth<>"none") then 1 else 0 end)as Acceptence,						
+    sum(case when status=4  then 1 else 0 end)as Approval,							
+	sum(case when returnmonth<>"" then 1 else 0 end) as ReturnNb,						
+	sum(case when (status=0 and apply_yearmonth<>"none")then 1 else 0 end) as CancelContract						
+from work.monthlydatatoHO1							
+group by posname, appyearmonth;							
+run;							
+							
+data work.monthlydatasummaryF;set work.monthlydatasummary;/*增加通过率的计算，同时删除appyearmonth=none的数据*/							
+AcceptenceRate=Acceptence/Application;format acceptenceRate percent16.2;							
+if appyearmonth="none" then delete;							
+run;							
+							
+/*计算客户平均购买金额及各个期数的笔数分期占比*/							
+data work.monthlydatatoHOIn;set work.monthlydatatoHO1(keep=posname defphases status appyearmonth totalprice totaldefprice);							
+if status=4 then output;							
+run;							
+							
+proc means data=work.monthlydatatoHOIn;/*计算每月销售商品的平均单价*/							
+var totalprice;							
+class posname appyearmonth;							
+title "每月销售商品的平均单价";							
+run;							
+							
+/*计算每月分期总金额*/							
+proc summary data=work.monthlydatatoHOIn;							
+class posname appyearmonth;							
+var totalprice totaldefprice;							
+title “总商品金额及商品总分期金额”;							
+output out=work.monthlydatatotaldefprice(where=(_type_ in (3))) sum=;run;							
+							
+							
+data work.monthlydatasummarytotaldefprice1;set work.monthlydatatotaldefprice;							
+if appyearmonth="2017-12" then output;							
+run;							
+							
+proc freq data=work.monthlydatatoHOIn;/*计算每期期数所占百分比*/							
+tables posname*appyearmonth*defphases;							
+title '每期期数的笔数占比';							
+run;							
+							
+							
+data work.monthlydatasummaryFF;set work.monthlydatasummaryF;							
+if appyearmonth="2017-12" then output;							
+run;							
+							
+/*此表有两个时间需要修改*/							
+/*修改时间，work.monthlydatasummaryFF数量统计，已使用了最新的定义,直接导出*/							
+/*work.monthlydatatoHOIn---中得到的proc means得到每月销售商品（实际成交）的平均单价, proc freq得到每期期数（实际成交）所占百分比，直接输出统计结果*/							
+/*修改时间work.monthlydatatotaldefprice1用于查询每家店每月的产品总额和赊购总额（实际成交）*/							
+							
+							
+/*此数据中的定义如下							
+Application： dps.apply_inf中status =3 or 4 or 8 or (0 and applyyearmonth<>"none")							
+Acceptence:dps.apply_inf中status =3 or 4 or (0 and applyyearmonth<>"none")							
+Acceptence Rate: Acceptence / Application							
+Approval : status = 4							
+Return : dps.returninfor 中的createdate*/							
