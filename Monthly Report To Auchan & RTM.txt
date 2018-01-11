@@ -1,6 +1,6 @@
 /*调用DPS_APPLY_INFO&day.中所需数据*/							
 
-
+不干活好久不见不会就不会见或不见 
 	
 DATA WORK.DPSDPS_DAILYAPPLY_INFO&day.;SET WORK.DPS_APPLY_INFO&day.;
 %datechange(APPLYDATE);%datechange(APPROVETIME); %datechange(FINISHDATE);%datechange(INPUTDATE);
